@@ -1,0 +1,277 @@
+from gurobipy import *
+import time
+import json
+import os
+import numpy as np
+import pandas as pd
+import random
+
+# Montecarlo simulation after having computed determinstically the fixed bins available in the first stage.
+# The scope is to analyze how the model reacts once uncertainty is introduced through stochastic items.
+
+#extract bins from the determinstic instance. From these I will manually impose the results of the
+# deterministic model as the fixed bins available in the first stage [J], while the remaining bins
+# will be available in the second stage [K] with the surcharge alfa
+with open('instances_det_json/instance_Sp3_s38.json', 'r') as f:  #da cambiare manualmente quando cambia il set deterministico
+    data_det = json.load(f)
+
+# Principal parameters
+spread_type = data_det['spread_type']
+
+# Bins' extraction from file
+bins = data_det['bins']
+expanded_bins = [] #full list of bins without the quantity, but as many bins as required
+counter = 0
+for b in bins:
+    bin_copy = b.copy()
+    quantity = bin_copy.pop('quantity')  # rimuovo 'quantity'
+    for _ in range(quantity):
+        new_bin = bin_copy.copy()
+        new_bin['id'] = counter  # aggiungo identificativo univoco
+        expanded_bins.append(new_bin)
+        counter += 1
+
+fixed_bins_index = [21, 22, 23, 24, 28, 29, 30, 31, 32, 33, 34] #MANUALLY IMPOSED bins from result of deterministic 1°-stage model
+fixed_bins = [] # will create set J
+for bin in expanded_bins:
+    if bin['id'] in fixed_bins_index:
+        fixed_bins.append(bin)
+
+extra_bins = [] #bins not fixed in the first stage -> will create set K
+for b in expanded_bins:
+    if b['id'] not in fixed_bins_index:
+        extra_bins.append(b)
+
+print("__FIXED BINS (J)__")
+for b in fixed_bins:
+    print(f"Bin id {b['id']}: Volume: {b['volume']}, Cost: {b['cost']}, "
+          f"Length: {b['length']}, Weight: {b['weight']}")
+
+
+print("__EXTRA BINS (K)__")
+for c in extra_bins:
+    print(f"Bin id {c['id']}:Volume: {c['volume']}, Cost: {c['cost']}, "
+          f"Length: {c['length']}, Weight: {c['weight']}")
+
+# manual parameters to be set for each combination of parameters -> to be changed for different iterations
+spread = 'Sp3'
+surcharge = 10  #5,10,20,40
+n_scen = 25
+
+# extraction of stochastic instances to be executed 10 times for robustness
+for rep in range(10):
+    filename = f'instances_json/instance_{spread}_s{surcharge}_n{n_scen}_r{rep}.json'
+    print(filename)
+    with open(filename, 'r') as f:
+        data = json.load(f)
+
+        alfa = data['surcharge']
+        scenarios = data['scenarios']
+        S = list(scenarios.keys())
+        prob_s = 1 / len(S)
+        """
+        for s_id, item_list in scenarios.items():
+            print(f"\nScenario {s_id}:")
+            for i, item in enumerate(item_list):
+                print(f"Item {i}: Volume={item['volume']}, Category={item['category']},"
+                      f" Length={item['length']}, Weight={item['weight']}")
+        """
+        # choose one scenario with a uniform distribution
+        random_scenario_id = random.choice(list(scenarios.keys()))
+        print(f"Running model for scenario {random_scenario_id}")
+        items = scenarios[random_scenario_id]
+        #print(items)
+
+
+        #Parameters' sets of one scenario
+        J = fixed_bins_index.copy() #first stage bins
+        K = []                      #second stage bins
+        for c in extra_bins:
+            extra_bins_id = c['id']
+            K.append(extra_bins_id)
+    # Parameters of bins
+    Vj = {b['id']: b['volume'] for b in fixed_bins}
+    Lj = {b['id']: b['length'] for b in fixed_bins}
+    Wj = {b['id']: b['weight'] for b in fixed_bins}
+    fj = {b['id']: b['cost'] for b in fixed_bins}
+    Vk = {b['id']: b['volume'] for b in extra_bins}
+    Lk = {b['id']: b['length'] for b in extra_bins}
+    Wk = {b['id']: b['weight'] for b in extra_bins}
+    fk = {b['id']: (b['cost']* (1+ alfa/100)) for b in extra_bins}
+
+    model = Model("VCSBPSI_Montecarlo")
+
+    # Decision Variables
+    #x = model.addVars(I, J + K, vtype=GRB.BINARY, name="x")
+    y = {}
+    for j in J:
+        y[j] = model.addVar(vtype=GRB.BINARY, name=f"y_{j}")
+        model.addConstr(y[j] == 1)  # logic constraint that forces y[j] = 1
+    #z = model.addVars(K, vtype=GRB.BINARY, name="z")
+    x = {}
+    z = {}
+    for s in S:
+        items = scenarios[s]
+        I = list(range(len(items)))
+        v = {i: items[i]['volume'] for i in I}
+        w = {i: items[i]['weight'] for i in I}
+        l = {i: items[i]['length'] for i in I}
+        lam = {i: items[i]['category'] for i in I}
+        T = ['S', 'M', 'B']
+        R_jt = {(j, t): Vj[j] // {'S': 10, 'M': 25, 'B': 40}[t] for j in J for t in T}
+        N_kt = {(k, t): Vk[k] // {'S': 10, 'M': 25, 'B': 40}[t] for k in K for t in T}
+
+        x[s] = model.addVars(I, J + K, vtype=GRB.BINARY, name=f"x_{s}")
+        z[s] = model.addVars(K, vtype=GRB.BINARY, name=f"z_{s}")
+
+
+        # Constraints
+        # (4) Each item assigned to one bin
+        for i in I:
+            model.addConstr(quicksum(x[s][i, b] for b in J+K) == 1)
+
+        # (5) Volume constraint in first-stage bins
+        for j in J:
+            model.addConstr(quicksum(v[i]*x[s][i, j] for i in I) <= Vj[j]*y[j])
+
+        # (6) Volume in second-stage
+        for k in K:
+            model.addConstr(quicksum(v[i]*x[s][i, k] for i in I) <= Vk[k]*z[s][k])
+
+        # (7)-(8) Weight constraints
+        for j in J:
+            model.addConstr(quicksum(w[i]*x[s][i, j] for i in I) <= Wj[j]*y[j])
+        for k in K:
+            model.addConstr(quicksum(w[i]*x[s][i, k] for i in I) <= Wk[k]*z[s][k])
+
+        # (9)-(10) Max items per type
+        for t in T:
+            for j in J:
+                model.addConstr(quicksum(x[s][i, j] for i in I if lam[i] == t) <= R_jt[j, t])
+            for k in K:
+                model.addConstr(quicksum(x[s][i, k] for i in I if lam[i] == t) <= N_kt[k, t])
+
+
+        # (11)-(12) Length constraints
+        for j in J:
+            model.addConstr(quicksum(l[i]*x[s][i, j] for i in I) <= Lj[j]*y[j])
+        for k in K:
+            model.addConstr(quicksum(l[i]*x[s][i, k] for i in I) <= Lk[k]*z[s][k])
+
+        # (15)-(16) Type homogeneity (big-M)
+        for b in J + K:
+            for t in T:
+                for i in I:
+                    if lam[i] == t:
+                        M = sum(1 for i2 in I if lam[i2] != t)
+                        model.addConstr(
+                            quicksum(x[s][i2, b] for i2 in I if lam[i2] != t) <= M * (1 - x[s][i, b])
+                        )
+
+
+    # Objective - minimization
+    model.setObjective(
+        quicksum(fj[j] * y[j] for j in J) +
+        quicksum(prob_s * fk[k] * z[s][k] for s in S for k in K),
+        GRB.MINIMIZE
+    )
+
+
+    # Time limit [can be removed if not necessary]
+    model.setParam("OutputFlag", 1)
+    model.setParam("MIPGap", 0.01)
+    model.setParam("TimeLimit", 1800)
+    model.setParam("Threads", 4)
+    start_time = time.time()
+    # Optimize
+    model.optimize()
+
+    end_time = time.time()
+    # computation of execution time (could be useful for comparison with heuristics)
+    execution_time = end_time - start_time
+
+    # time limit reached -> approximated solution
+    if model.Status == GRB.TIME_LIMIT:
+        print("Tempo limite raggiunto, soluzione approssimata.")
+    # infeasibility case
+    elif model.status == GRB.INFEASIBLE:
+        print("Model is infeasible. Computing IIS...")
+        model.computeIIS()
+        model.write("model.ilp")  # esporta il modello
+        model.write("infeasible.ilp")  # esporta il sistema infeasible
+    else:
+        print("\n✅ OPTIMAL SOLUTION FOUND")
+    if model.Status == GRB.OPTIMAL or model.Status == GRB.TIME_LIMIT:
+        total_cost = model.ObjVal
+        print(f"Objective function: {total_cost}")
+
+        # First stage bin cost
+        cost_fs = sum(fj[j] for j in J if y[j].X == 1)
+        percentage_fs = (cost_fs / total_cost) * 100
+        print(f"First-stage cost: {round(cost_fs, 3)} ({round(percentage_fs, 2)}%)")
+
+        # Aggregated stats for 1st and 2nd stage
+        prob_s = 1 / len(S)  # uniform probability
+        total_fill_1st = 0.0
+        count_1st = 0
+        total_z = 0.0  # weighted total number of second-stage bins used
+        total_fill_2nd = 0.0
+        count_2nd = 0
+
+        for s in S:
+            items = scenarios[s]
+            I = list(range(len(items)))
+            v = {i: items[i]['volume'] for i in I}
+
+            fill_sum_1st = 0
+            fill_count_1st = 0
+
+            # First-stage bins fill
+            for j in J:
+                volume_used = 0
+                if y[j].X == 1:  # bin j is used
+                    print(f"Bin {j} used; Original volume {Vj[j]}")
+                    items_in_bin = [i for i in I if x[s][i, j].X == 1]
+                    for vv in items_in_bin:
+                        volume_used += v[vv]
+                    print(f"  Items: {items_in_bin}; Filling level of bin: {((volume_used / Vj[j]) * 100)}")
+                    if items_in_bin:
+                        fill = sum(v[i] for i in items_in_bin) / Vj[j] * 100
+                        fill_sum_1st += fill
+                        fill_count_1st += 1
+
+            # somma la media dei fill di questo scenario pesata per la sua probabilità
+            if fill_count_1st > 0:
+                total_fill_1st += prob_s * (fill_sum_1st / fill_count_1st)
+                count_1st += 1
+
+            # Second-stage bins usage and fill
+            z_used = 0
+            fill_sum = 0
+            fill_count = 0
+            for k in K:
+                if z[s][k].X == 1:
+                    z_used += 1
+                    print(f"Bin {k} used; Original volume {Vk[k]}")
+                    items_in_bin = [i for i in I if x[s][i, k].X > 0.5]
+                    fill = sum(v[i] for i in items_in_bin) / Vk[k] * 100
+                    fill_sum += fill
+                    fill_count += 1
+
+            total_z += prob_s * z_used
+            if fill_count > 0:
+                total_fill_2nd += prob_s * (fill_sum / fill_count)
+                count_2nd += 1
+
+        avg_fill_1st = total_fill_1st if count_1st > 0 else 0
+        print(f"Weighted avg. fill level (1st stage bins): {round(avg_fill_1st, 2)}%")
+        avg_fill_2nd = total_fill_2nd if count_2nd > 0 else 0
+        print(f"Weighted avg. second-stage bins used: {round(total_z, 2)}")
+        print(f"Weighted avg. fill level (2nd stage bins): {round(avg_fill_2nd, 2)}%")
+    else:
+        print("No optimal solution found.")
+    print("Resolution time: {}\n".format(execution_time))
+
+
+
+
