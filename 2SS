@@ -1,0 +1,190 @@
+from gurobipy import *
+import time
+import json
+import os
+import numpy as np
+import pandas as pd
+import random
+
+# this code runs the 2-stage stochastic optimization model for VCSBPSI with additional constraints, using Gurobi.
+# The model extracts data from an instance with the following combinations of parameters
+# (spread type, alfa surcharge, number of scenarios) for 10 times, in order to grant robustness in the results.
+# The instances are generated previously in another python project "Instances_generation".
+
+# combination of parameters to be changed manually for the right istance
+spread = 'Sp1'  # spread type
+surcharge = 40  # alfa 5, 10, 20, 40
+n_scen = 10  # number of scenarios S
+
+# extraction of stochastic instances through .json reading function
+for rep in range(5):
+    filename = f'instances_json/instance_{spread}_s{surcharge}_n{n_scen}_r{rep}.json'
+    print(filename)
+    with open(filename, 'r') as f:
+        data = json.load(f)
+
+        # Extraction of bins from opened instance
+        bins_raw = data['bins']
+        print("__BINS__")
+        for b in bins_raw:
+            print(f"Volume: {b['volume']}, Cost: {b['cost']}, "
+                  f"Length: {b['length']}, Weight: {b['weight']}, Quantity: {b['quantity']}")
+        alfa = data['surcharge']
+        scenarios = data['scenarios']
+        S = list(scenarios.keys())
+        prob_s = 1/len(S)
+
+        bins = []  # list which will contain the full number of bins. This will be used from now on
+        counter = 0
+        for b in bins_raw:
+            bin_copy = b.copy()
+            quantity = bin_copy.pop('quantity')  # remove field 'quantity'
+            for _ in range(quantity):
+                new_bin = bin_copy.copy()
+                new_bin['id'] = counter  # add unique id to be able to track the bin
+                bins.append(new_bin)
+                counter += 1
+
+        #create set J which contains all bins
+        J = [b['id'] for b in bins]
+
+    # Bin params
+    V = {b['id']: b['volume'] for b in bins}
+    L = {b['id']: b['length'] for b in bins}
+    W = {b['id']: b['weight'] for b in bins}
+    F = {b['id']: b['cost'] for b in bins}
+
+    # start of the optimization model
+    model = Model("2Stage_Stochastic")
+    # decision variables creation for bins usage
+    y = model.addVars(J, vtype=GRB.BINARY, name="y")
+    z = {s: model.addVars(J, vtype=GRB.BINARY, name=f"z_{s}") for s in S}
+    x = {s: {} for s in S}
+    #items categories
+    T = ['S', 'M', 'B']
+    divider = {'S': 10, 'M': 25, 'B': 40}
+    #scenarios S iterations
+    for s in S:
+        items = scenarios[s]
+        I = list(range(len(items)))
+        #items parameters
+        v = {i: items[i]['volume'] for i in I}
+        w = {i: items[i]['weight'] for i in I}
+        l = {i: items[i]['length'] for i in I}
+        lam = {i: items[i]['category'] for i in I}
+        #decision variables for items
+        x[s] = model.addVars(I, J, vtype=GRB.BINARY, name=f"x_{s}")
+        #CONSTRAINTS
+        # Each item assigned to only one bin
+        for i in I:
+            model.addConstr(quicksum(x[s][i, j] for j in J) == 1)
+        # volume, weight and length constraint
+        for j in J:
+            model.addConstr(quicksum(v[i] * x[s][i, j] for i in I) <= V[j] * y[j] + V[j] * z[s][j])
+            model.addConstr(quicksum(w[i] * x[s][i, j] for i in I) <= W[j] * y[j] + W[j] * z[s][j])
+            model.addConstr(quicksum(l[i] * x[s][i, j] for i in I) <= L[j] * y[j] + L[j] * z[s][j])
+            # Type max constraints
+
+            for t in T:
+                max_items = V[j] // divider[t]
+                model.addConstr(quicksum(x[s][i, j] for i in I if lam[i] == t) <= max_items)
+            
+            # Type homogeneity constraint (Big M)
+            for t in T:
+                for i in I:
+                    if lam[i] == t:
+                        M = sum(1 for i2 in I if lam[i2] != t)
+                        model.addConstr(quicksum(x[s][i2, j] for i2 in I if lam[i2] != t) <= M * (1 - x[s][i, j]))
+
+        # No bin can be used in 2nd stage if used in 1st -> bin can be used in only 1 stage
+        for j in J:
+            model.addConstr(z[s][j] <= 1 - y[j])
+
+    # Objective: First stage cost + Expected second stage cost
+    model.setObjective(
+        quicksum(F[j]*y[j] for j in J) +
+        quicksum(prob_s * (F[j] * (1 +alfa/100))*z[s][j] for s in S for j in J),
+        GRB.MINIMIZE
+    )
+
+    model.setParam("OutputFlag", 1)
+    model.setParam("MIPGap", 0.01)
+    model.setParam("TimeLimit", 1800) # time limit 30 minutes
+    model.setParam("Threads", 8)
+    start_time = time.time()
+    model.optimize()
+    print(f"Gurobi runtime (reported): {model.Runtime:.2f} sec")
+
+    end_time = time.time()
+    # computation of execution time (could be useful for comparison with heuristics)
+    execution_time = end_time - start_time
+    # time limit reached -> approximated solution
+    if model.Status == GRB.TIME_LIMIT:
+        print("TIME LIMIT REACHED. APPROXIMATED SOLUTION")
+    # infeasibility case
+    elif model.status == GRB.INFEASIBLE:
+        print("Model is infeasible. Computing IIS...")
+        model.computeIIS()
+        model.write("model.ilp")  # esporta il modello
+        model.write("infeasible.ilp")  # esporta il sistema infeasible
+    else:
+        print("\nOPTIMAL SOLUTION FOUND")
+
+    if model.Status == GRB.OPTIMAL or model.Status == GRB.TIME_LIMIT:
+        total_cost = model.ObjVal
+        print(f"Objective function: {total_cost}")
+
+        # First stage bin cost
+        cost_fs = sum(F[j] for j in J if y[j].X == 1)
+        percentage_fs = (cost_fs / total_cost) * 100
+        print(f"First-stage cost: {round(cost_fs, 3)} ({round(percentage_fs, 2)}%)")
+
+        fill_1st, fill_2nd, total_j, total_z = 0.0, 0.0, 0.0, 0.0
+        for s in S:
+            items = scenarios[s]
+            I = list(range(len(items)))
+            v = {i: items[i]['volume'] for i in I}
+
+            fill_j, count_j = 0, 0
+            fill_k, count_k = 0, 0
+            j_used = 0
+            z_used = 0
+
+            for j in J:
+                if y[j].X > 0.5:
+                    print(f"Fixed Bin {j} used; Original volume {V[j]}")
+                    items_in_j = [i for i in I if x[s][i, j].X > 0.5]
+                    j_used += 1
+                    if items_in_j:
+                        print(f" Items: {items_in_j}")
+                        usage = sum(v[i] for i in items_in_j) / V[j]
+                        fill_j += usage * 100
+                        count_j += 1
+                    else:
+                        print(" Items: none (bin open but unused in this scenario)")
+                elif z[s][j].X > 0.5:
+                    items_in_j = [i for i in I if x[s][i, j].X > 0.5]
+                    print(f"Extra Bin {j} used; Original volume {V[j]}")
+                    print(f" Items: {items_in_j}")
+                    z_used += 1
+                    usage = sum(v[i] for i in items_in_j) / V[j]
+                    fill_k += usage * 100
+                    count_k += 1
+
+            if count_j > 0: fill_1st += prob_s * (fill_j / count_j)
+            total_j += prob_s * j_used
+            if count_k > 0: fill_2nd += prob_s * (fill_k / count_k)
+            total_z += prob_s * z_used
+
+        print(f"Weighted avg. first-stage bins used: {round(total_j, 2)}")
+        print(f"Weighted avg. fill level (1st stage bins): {round(fill_1st, 2)}%")
+        print(f"Weighted avg. second-stage bins used: {round(total_z, 2)}")
+        print(f"Weighted avg. fill level (2nd stage bins): {round(fill_2nd, 2)}%")
+    else:
+        print("No optimal solution found.")
+        if model.status == GRB.INFEASIBLE:
+            print("Computing IIS...")
+            model.computeIIS()
+            model.write("infeasible.ilp")
+
+    print(f"RESOLUTION TIME: {round(end_time - start_time, 2)} seconds \n\n\n\n")
