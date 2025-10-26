@@ -1,0 +1,108 @@
+import math
+import random
+import os
+import json
+import numpy as np
+import pandas as pd
+
+"""
+This problem is obtained by substituting the stochastic item set in each
+scenario with a set of deterministic items computed by averaging the number and the volume of big, medium
+and small items in the scenarios. Then, the associated deterministic problem is solved in order to obtain the
+tactical plan (i.e. the first stage decision)
+"""
+# computing a deterministic instance used to find fixed bins allocated in first stage
+# define the 3 types of bins' volume, then assigning to each bin the cost
+bin_volumes = [50, 100, 120]
+delta = 0
+#create a list of dictionaries where I can save for each bin, the volume, the cost, and the extra cost
+bins = []
+for v in bin_volumes:
+    cost = round(math.sqrt(v)*(1+delta), 2)
+    length = 16.5
+    weight = 500 * v
+    bins.append({'volume': v, 'cost': cost, 'length': length, 'weight': weight})
+print(bins)
+
+# assigning for each instance a typology of type spread, with a related percentage spread on the items' categories
+"""
+spread_type = 'Sp1'
+#dist = {'S': 0.6, 'M': 0.2, 'B': 0.2}
+small = 0.6
+medium = 0.2
+big = 0.2
+
+spread_type = 'Sp2'
+#dist = {'S': 0.2, 'M': 0.6, 'B': 0.2}
+small = 0.2
+medium = 0.6
+big = 0.2
+"""
+spread_type = 'Sp3'
+#dist = {'S': 0.2, 'M': 0.2, 'B': 0.6}
+small = 0.2
+medium = 0.2
+big = 0.6
+
+
+num_items = 38 #avg number of bins
+instance = {}
+
+items = []
+for x in range(int((num_items+1)*small)):
+    volume = 7.5
+    category = 'S'
+    weight = round(500 * volume, 2)
+    length = round(np.cbrt(volume), 2)
+    items.append((volume, category, length, weight))
+for y in range(int((num_items+1)*medium)):
+    volume = 20
+    category = 'M'
+    weight = round(500 * volume, 2)
+    length = round(np.cbrt(volume), 2)
+    items.append((volume, category, length, weight))
+for z in range(int((num_items+1)*big)):
+    volume = 30
+    category = 'B'
+    weight = round(500 * volume, 2)
+    length = round(np.cbrt(volume), 2)
+    items.append((volume, category, length, weight))
+print(items)
+
+# compute the minimum quantity of bins necessary to pack all items
+total_volume = 0
+for i in items:
+    total_volume += i[0]
+bins_needed = {}
+for vv in bin_volumes:
+    bins_needed[vv] = math.ceil(total_volume / vv)
+
+#add this parameter to the list 'bins', which had already volumes and costs,
+#so to use it as data input for the model
+for b in bins:
+    b['quantity'] = bins_needed.get(b['volume'], 0)  # use 0 if volume is not found
+#the function returns the list of bins and the items for the number of scenarios of the case
+
+print(bins)
+
+##JSON file creation
+json_data = {
+    "spread_type": spread_type,
+    "bins": bins,
+    "number_items": num_items,
+    "items": {}
+}
+
+# print all scenarios with related items
+json_data["items"] = [
+    {"volume": v, "category": cat, "length": l, "weight": w}
+    for (v, cat, l, w) in items
+]
+
+# Save JSON file
+os.makedirs("instances_det_json", exist_ok=True)
+json_filename = f"instances_det_json/instance_{spread_type}_s{num_items}.json"
+with open(json_filename, 'w') as jf:
+    json.dump(json_data, jf, indent=4)
+
+
