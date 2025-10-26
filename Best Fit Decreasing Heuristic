@@ -1,0 +1,239 @@
+import time
+import random
+import json
+import numpy as np
+
+def bfd_two_stage_simple_with_costs(items, bins_first, bins_second, Rjt, Nkt, alfa):
+    """
+    Two-stage heuristic (Best-Fit Decreasing + cost logic)
+    """
+
+    # 1) Order items & bins
+    items_sorted = sorted(items, key=lambda x: -x['volume'])
+    bins_first_sorted  = sorted(bins_first,  key=lambda b: b['cost'])
+    bins_second_sorted = sorted(bins_second, key=lambda b: b['cost'])
+
+    # 2) Initialize bin states
+    def init_state(bins_sorted):
+        return {
+            b['id']: {
+                'remaining_volume': b['volume'],
+                'remaining_weight': b['weight'],
+                'remaining_length': b['length'],
+                'type_count': {},
+                'items': [],
+                'assigned_type': None,
+                'cost': b['cost'],
+            } for b in bins_sorted
+        }
+
+    state_J = init_state(bins_first_sorted)
+    state_K = init_state(bins_second_sorted)
+
+    # 3) Adaptive placement (Best-Fit + Cost)
+    def try_place_adaptive(item, bins_sorted, state, type_cons, alpha=0.8):
+        best_bin, best_key = None, None
+        for b in bins_sorted:
+            bid, s = b['id'], state[b['id']]
+            if (item['volume'] > s['remaining_volume'] or
+                item['weight'] > s['remaining_weight'] or
+                item['length'] > s['remaining_length']):
+                continue
+            t = item['category']
+            if s['assigned_type'] is not None and s['assigned_type'] != t:
+                continue
+            if (bid, t) in type_cons and s['type_count'].get(t, 0) >= type_cons[(bid, t)]:
+                continue
+
+            cost = b['cost']
+            total_vol = s.get('total_volume', s['remaining_volume'] + item['volume'])
+            fill_gain = item['volume'] / max(total_vol, 1e-9)
+            score = alpha * cost + (1 - alpha) * (1 - fill_gain)
+            if best_key is None or score < best_key:
+                best_key, best_bin = score, bid
+
+        if best_bin is not None:
+            s = state[best_bin]
+            s['remaining_volume'] -= item['volume']
+            s['remaining_weight'] -= item['weight']
+            s['remaining_length'] -= item['length']
+            t = item['category']
+            s['type_count'][t] = s['type_count'].get(t, 0) + 1
+            if s['assigned_type'] is None: s['assigned_type'] = t
+            s['items'].append(item['id'])
+        return best_bin
+
+    # 4) FIRST STAGE (assign items to J-bins)
+    assignments, leftovers = {}, []
+    for item in items_sorted:
+        bid = try_place_adaptive(item, bins_first_sorted, state_J, Rjt, alpha=0.8)
+        if bid is not None:
+            assignments[item['id']] = bid
+        else:
+            leftovers.append(item)
+
+    # 5) SECOND STAGE (assign leftovers to K-bins)
+    if leftovers:
+        for item in leftovers:
+            bid = try_place_adaptive(item, bins_second_sorted, state_K, Nkt, alpha=0.8)
+            assignments[item['id']] = bid
+
+    # 6) Cost computation
+    used_bins_J = [bid for bid, s in state_J.items() if s['items']]
+    used_bins_K = [bid for bid, s in state_K.items() if s['items']]
+
+    #cost_map_J = {b['id']: b['cost'] for b in bins_first_sorted}
+    cost_map_K = {b['id']: b['cost'] * (1 + alfa/100) for b in bins_second_sorted}  # surcharge applied
+
+    cost_J = sum(b['cost'] for b in bins_first_sorted)
+    cost_K = sum(cost_map_K[bid] for bid in used_bins_K)
+    total_cost = cost_J + cost_K
+    cost_share_J_pct = 100.0 * cost_J / total_cost if total_cost > 0 else 0.0
+
+    cost_report = {
+        'used_bins_J': used_bins_J,
+        'used_bins_K': used_bins_K,
+        'cost_J': cost_J,
+        'cost_K': cost_K,
+        'total_cost': total_cost,
+        'cost_share_J_pct': cost_share_J_pct
+    }
+
+    vol_map_J = {b['id']: b['volume'] for b in bins_first_sorted}
+    vol_map_K = {b['id']: b['volume'] for b in bins_second_sorted}
+
+    # 7) Fill levels
+    def build_fill_report(state, vol_map):
+        rep = []
+        for bid, s in state.items():
+            V_tot = vol_map[bid]
+            V_used = V_tot - s['remaining_volume']
+            fill_pct = (100.0 * V_used / V_tot) if V_tot > 0 else 0.0
+            rep.append({
+                'bid': bid,
+                'fill_pct': fill_pct,
+                'volume used': V_used,
+                'volume total': V_tot,
+            })
+        return rep
+
+    fill_report = {
+        'J': build_fill_report(state_J, vol_map_J),
+        'K': build_fill_report(state_K, vol_map_K),
+    }
+
+    return assignments, state_J, state_K, cost_report, fill_report
+
+
+""" ===========================================================
+                HEURISTIC DRIVER (multi-scenario)
+=========================================================== """
+
+spread = 'Sp3'
+surcharge = 40
+n_scen = 25
+
+for rep in range(10):
+    filename = f'instances_json/instance_{spread}_s{surcharge}_n{n_scen}_r{rep}.json'
+    print(f"\n=== RUN {rep} | FILE {filename} ===")
+    with open(filename, 'r') as f:
+        data = json.load(f)
+
+    # Extraction of bins from opened instance
+    bins = data['bins']
+    scenarios = data['scenarios']
+    alfa = data['surcharge']
+
+    # list which will contain the full number of bins. This will be used from now on
+    expanded_bins = []
+    counter = 0
+    for b in bins:
+        bin_copy = b.copy()
+        quantity = bin_copy.pop('quantity')  # remove field 'quantity'
+        for _ in range(quantity):
+            new_bin = bin_copy.copy()
+            new_bin['id'] = counter  # add unique id to be able to track the bin
+            expanded_bins.append(new_bin)
+            counter += 1
+
+    # Step 1 — compute total volume per scenario
+    demands = [sum(item['volume'] for item in scenarios[s]) for s in scenarios]
+    mean_demand = np.mean(demands)
+    q80_demand = np.quantile(demands, 0.8)  # coverage at 80%
+
+    # Step 2 — determine how much capacity to open in first stage
+    total_bin_capacity = sum(b['volume'] for b in expanded_bins)
+    coverage_ratio = q80_demand / total_bin_capacity
+    coverage_ratio = min(1.0, coverage_ratio)
+
+    n_total = len(expanded_bins)
+    n_j = max(1, int(coverage_ratio * n_total))  # dynamic 1st stage size
+
+    shuffled_bins = expanded_bins.copy()
+    random.shuffle(shuffled_bins)
+    fixed_bins = shuffled_bins[:n_j]
+    extra_bins = shuffled_bins[n_j:]
+
+    # Step 3 — choose a random scenario to test heuristic performance
+    random_scenario_id = random.choice(list(scenarios.keys()))
+    items = scenarios[random_scenario_id]
+    for i, item in enumerate(items):
+        item["id"] = i
+        item.pop("number_items", None)
+
+    # Step 4 — build type constraints
+    T = ['S', 'M', 'B']
+    Vj = {b['id']: b['volume'] for b in fixed_bins}
+    Vk = {b['id']: b['volume'] for b in extra_bins}
+    R_jt, N_kt = {}, {}
+    dividers = {'S': 10, 'M': 25, 'B': 40}
+    for bin_id, volume in Vj.items():
+        for type, divider in dividers.items():
+            R_jt[(bin_id, type)] = volume // divider
+    for bin_id, volume in Vk.items():
+        for type, divider in dividers.items():
+            N_kt[(bin_id, type)] = volume // divider
+
+    # Step 5 — run heuristic
+    start = time.time()
+    assignments, state_J, state_K, costs, fill_levels = bfd_two_stage_simple_with_costs(
+        items, fixed_bins, extra_bins, R_jt, N_kt, alfa)
+    end = time.time()
+    execution_time = end - start
+
+    # Print results
+    print("\nAssignments to bins J")
+    for bid, s in state_J.items():
+        if s['items']:  # solo bin usati
+            print(f"Bin {bid}: {s['items']}")
+    print("\nAssignments to bins K")
+    for bid, s in state_K.items():
+        if s['items']:
+            print(f"Bin {bid}: {s['items']}")
+    print("\nBin J usati:", costs['used_bins_J'], "Costo J:", costs['cost_J'])
+    print("Bin K usati:", costs['used_bins_K'], "Costo K:", costs['cost_K'])
+    print("Costo totale:", costs['total_cost'])
+    print("Costo percentuale primo stage:", costs['cost_share_J_pct'])
+    print("\nFill levels bins J:")
+    counter = 0
+    level = 0
+    for f in fill_levels['J']:
+        print(f"Bin {f['bid']}: Filling percentage: {f['fill_pct']}")
+        level += f['fill_pct']
+        counter += 1
+    print(f"Average fill level bins J: {level / counter:.2f}%")
+    print("\nFill levels bins K:")
+    counter = 0
+    level = 0
+    if costs['used_bins_K']:
+        for bins in costs['used_bins_K']:
+            for f in fill_levels['K']:
+                if f['bid'] == bins:
+                    print(f"Bin {f['bid']}: Filling percentage: {f['fill_pct']}")
+                    level += f['fill_pct']
+                    counter += 1
+                    break
+        print(f"Average fill level bins K: {level / counter:.2f}%")
+    else:
+        print("No bins of set K was used")
+    print("\nExecution TIME:", execution_time)
