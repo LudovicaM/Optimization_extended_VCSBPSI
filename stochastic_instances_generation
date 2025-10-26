@@ -1,0 +1,203 @@
+import math
+import random
+import os
+import json
+import numpy as np
+import pandas as pd
+
+
+#function which generates 10 instances for each combination of parameters (spread type, alfa, number of scenarios)
+def generate_instance(spread_type, alfa, num_scenarios, seed=None):
+    if seed is not None:
+        random.seed(seed)
+
+# define the 3 types of bins' volume, then assigning to each bin the cost
+    bin_volumes = [50, 100, 120]
+# create a list of dictionaries where I can save for each bin, the volume, the cost, and the extra cost
+    bins = []
+    for v in bin_volumes:
+        delta = random.uniform(-0.3, 0.3)
+        cost = round(math.sqrt(v) * (1 + delta), 2)
+        #length = round(np.cbrt(v), 2)
+        length = 16.5
+        weight = 500 * v
+        bins.append({'volume': v, 'cost': cost, 'length': length, 'weight': weight})
+
+#after having defined each bin, I also add the extra cost with the surcharge alfa,
+# in case the bin is selected in the second stage and therefore costs more.
+    for b in bins:
+        b['extra_cost'] = round(b['cost'] * (1 + (alfa/100)), 2)
+
+# assigning for each instance a typology of type spread, with a related percentage spread on the items' categories
+    if spread_type == 'Sp1':
+        #dist = {'S': 0.6, 'M': 0.2, 'B': 0.2}
+        small = 0.6
+        medium = 0.2
+        big = 0.2
+    elif spread_type == 'Sp2':
+        #dist = {'S': 0.2, 'M': 0.6, 'B': 0.2}
+        small = 0.2
+        medium = 0.6
+        big = 0.2
+    elif spread_type == 'Sp3':
+        #dist = {'S': 0.2, 'M': 0.2, 'B': 0.6}
+        small = 0.2
+        medium = 0.2
+        big = 0.6
+    else:
+        raise ValueError("Invalid spread type")
+
+    """
+    PRINTING TEST
+    #print("Spread type:" + spread_type)
+    #generate a number of items for the instance, uniformly distributed between 25 and 50
+    #print("Number of items:" + str(num_items))
+    #print("Number of scenarios:" + str(num_scenarios))
+    """
+
+    # for each number of scenario, generate with a uniform distribution the number of items,
+    # the volume, length, weight and assign the category
+    # after these measures are assigned, add the item to the items list [volume, category]
+    # the list is temporary, and for each iteration of scenario [25,50,100], a dictionary will be created
+    # containing the items
+    instance = {} #this dictionary will contain for the current instance all the scenarios
+    for i in range(num_scenarios):
+        items = []
+        num_items = int(random.uniform(25, 50))
+        for x in range(int((num_items+1)*small)):
+            volume = round(random.uniform(5, 10), 2)
+            category = 'S'
+            weight = round(500 * volume, 2)
+            length = round(np.cbrt(volume), 2)
+            items.append((volume, category, length, weight))
+        for y in range(int((num_items+1)*medium)):
+            volume = round(random.uniform(15, 25), 2)
+            category = 'M'
+            weight = round(500 * volume, 2)
+            length = round(np.cbrt(volume), 2)
+            items.append((volume, category, length, weight))
+        for z in range(int((num_items+1)*big)):
+            volume = round(random.uniform(20, 40), 2)
+            category = 'B'
+            weight = round(500 * volume, 2)
+            length = round(np.cbrt(volume), 2)
+            items.append((volume, category, length, weight))
+        # after all the items are generated, append them all to the instance dictionary,
+        # which will be used as an input for the model
+        instance[i] = items
+
+    # compute the minimum quantity of bins necessary to pack all items
+    volume_sum = 0
+    total_volumes = []
+    for lista_tuple in instance.values():
+        for tupla in lista_tuple:
+            volume_sum += tupla[0]
+        total_volumes.append(volume_sum)
+        volume_sum = 0
+    tot_vol = max(total_volumes)
+    bins_needed = {}
+    for vv in bin_volumes:
+        bins_needed[vv] = (math.ceil(tot_vol / vv)+2)
+
+    #add this parameter to the list 'bins', which had already volumes and costs,
+    #so to use it as data input for the model
+    for b in bins:
+        b['quantity'] = bins_needed.get(b['volume'], 0)  # use 0 if volume is not found
+
+    #the function returns the list of bins and the items for the number of scenarios of the case
+    return bins, instance
+
+
+
+# --- Loop to generate all 360 instances in TXT format -> initial phase,
+# to personally make sure that the instances are generated correctly
+# Later the results will be fed to the model as input data in a json file
+os.makedirs("instances_txt", exist_ok=True)
+
+spread_types = ['Sp1', 'Sp2', 'Sp3']
+alfa = [5, 10, 20, 40]
+scenario_counts = [10]
+
+#for each combination: spread type (sp) x surcharge (alfa) x scenario (S), we generate 10 instances
+# so to make sure that the data is robust and not manipulated
+instance_id = 0
+for spread in spread_types:
+    spread_num = spread_types.index(spread)
+    for surcharge in alfa:
+        for scen_count in scenario_counts:
+            for rep in range(10):
+                bins, items_scenarios = generate_instance(spread, surcharge, scen_count, seed=instance_id)
+
+                #TXT
+                filename = f"instances_txt/instance_{spread}_s{surcharge}_n{scen_count}_r{rep}.txt"
+                with open(filename, 'w') as f:
+                    f.write(f"Spread Type: {spread}\n")
+                    f.write(f"Surcharge: {surcharge}\n")
+                    f.write(f"Scenarios: {scen_count}\n\n")
+
+                    f.write("Bin Types (volume, cost, length, weight, extra_cost, # needed):\n")
+                    for b in bins:
+                        f.write(f"  {b['volume']} {b['cost']} {b['length']} {b['weight']} {b['extra_cost']} {b['quantity']}\n")
+
+                    #for s_id, items in enumerate(items_scenarios):
+                    for s_id, items in items_scenarios.items():
+                        f.write(f"\nScenario {s_id + 1} - {len(items)} items:\n")
+                        for v, cat, l, w in items_scenarios[s_id]:
+                            f.write(f"  {v} {cat} {l} {w}\n")
+
+                instance_id += 1
+
+                ##JSON file -> will be fed to the model
+                # Creo una struttura dati serializzabile
+                json_data = {
+                    "spread_type": spread,
+                    "surcharge": surcharge,
+                    "num_scenarios": scen_count,
+                    "bins": bins,
+                    "scenarios": {}
+                }
+
+                # Organizzo gli scenari in formato leggibile
+                for s_id, items in items_scenarios.items():
+                    json_data["scenarios"][s_id] = [
+                        {"number_items": len(items),"volume": v, "category": cat, "length": l, "weight": w}
+                        for (v, cat, l, w) in items
+                    ]
+
+
+                # Salva il file JSON
+                os.makedirs("instances_json", exist_ok=True)
+                json_filename = f"instances_json/instance_{spread}_s{surcharge}_n{scen_count}_r{rep}.json"
+                with open(json_filename, 'w') as jf:
+                    json.dump(json_data, jf, indent=4)
+
+                # EXCEL (backup file)
+                # Cartella destinazione
+                os.makedirs("instances_excel", exist_ok=True)
+
+                excel_filename = f"instances_excel/instance_{spread}_s{surcharge}_n{scen_count}_r{rep}.xlsx"
+                with pd.ExcelWriter(excel_filename, engine='xlsxwriter') as writer:
+
+                    # Foglio 1: Bin info
+                    df_bins = pd.DataFrame(bins)
+                    df_bins.to_excel(writer, sheet_name='Bins', index=False)
+
+                    # Foglio 2: Metadati
+                    df_meta = pd.DataFrame([{
+                        "spread_type": spread,
+                        "surcharge": surcharge,
+                        "num_scenarios": scen_count,
+                        "num_bins": len(bins),
+                        "instance_id": instance_id
+                    }])
+                    df_meta.to_excel(writer, sheet_name='Metadata', index=False)
+
+                    # Fogli per ogni scenario
+                    for s_id, items in items_scenarios.items():
+                        df_items = pd.DataFrame(items, columns=["volume", "category", "length", "weight"])
+                        df_items.to_excel(writer, sheet_name=f"Scenario_{s_id}", index=False)
+
+print("All 360 TXT instances generated in instances folders.")
+
+
+
