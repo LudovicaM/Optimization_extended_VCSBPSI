@@ -1,0 +1,251 @@
+{
+    "spread_type": "Sp3",
+    "bins": [
+        {
+            "volume": 50,
+            "cost": 7.07,
+            "length": 16.5,
+            "weight": 25000,
+            "quantity": 18
+        },
+        {
+            "volume": 100,
+            "cost": 10.0,
+            "length": 16.5,
+            "weight": 50000,
+            "quantity": 9
+        },
+        {
+            "volume": 120,
+            "cost": 10.95,
+            "length": 16.5,
+            "weight": 60000,
+            "quantity": 8
+        }
+    ],
+    "number_items": 38,
+    "items": [
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 7.5,
+            "category": "S",
+            "length": 1.96,
+            "weight": 3750.0
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 20,
+            "category": "M",
+            "length": 2.71,
+            "weight": 10000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        },
+        {
+            "volume": 30,
+            "category": "B",
+            "length": 3.11,
+            "weight": 15000
+        }
+    ]
+}
