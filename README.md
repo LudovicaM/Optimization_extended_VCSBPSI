@@ -15,3 +15,5 @@ The files [CODE] contain the copy of the python code used for generating the res
 6 - heuristic SS BFD: heuristic algorithm which benchmarks the 2 stage stochastic solution approach
 
 The Excel file **"FINAL_RESULTS"** contains all the results from the test carried out for the master thesis, reporting on the different sheets the outcomes of different parameters combination. In the summary sheets there are some tables that compares the results. 
+
+The ZIP file **Instances** contains the instances used for the 2SS model, while the 3 single files called instance_spx_n38 contain, for each spread of items, the deterministic instances used for the EVP. 
